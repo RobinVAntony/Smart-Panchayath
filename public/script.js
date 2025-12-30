@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:8181';
+const API_BASE_URL = 'https://smart-panchayath.onrender.com/';
 const API_BASE = API_BASE_URL + '/api';
 console.log('API Base:', API_BASE);
 
