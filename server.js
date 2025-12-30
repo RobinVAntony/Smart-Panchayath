@@ -20,6 +20,19 @@ const influxDB = new InfluxDB({ url: INFLUX_CONFIG.url, token: INFLUX_CONFIG.tok
 const writeApi = influxDB.getWriteApi(INFLUX_CONFIG.org, INFLUX_CONFIG.bucket);
 const queryApi = influxDB.getQueryApi(INFLUX_CONFIG.org);
 
+
+// ==================== MYSQL CONFIGURATION ====================
+const mysql = require('mysql2/promise');
+
+const db = mysql.createPool({
+  host: process.env.MYSQL_HOST,
+  user: process.env.MYSQL_USER,
+  password: process.env.MYSQL_PASSWORD,
+  database: process.env.MYSQL_DATABASE,
+  port: process.env.MYSQL_PORT,
+});
+
+
 // ==================== MIDDLEWARE ====================
 
 console.log('Influx env check:', {
@@ -102,32 +115,7 @@ async function writeToInfluxDB(measurement, tags, fields) {
 }
 
 // Get all fields for a specific villager
-async function getVillagerFields(aadhaarNumber) {
-  try {
-    const query = `
-      from(bucket: "${INFLUX_CONFIG.bucket}")
-        |> range(start: -365d)
-        |> filter(fn: (r) => r._measurement == "villagers")
-        |> filter(fn: (r) => r.aadhaar_number == "${aadhaarNumber}")
-        |> filter(fn: (r) => r._field == "name" or r._field == "phone" or r._field == "status" or r._field == "village" or r._field == "panchayat")
-        |> last()
-    `;
 
-    const result = await queryInfluxDB(query);
-
-    const data = { aadhaar_number: aadhaarNumber };
-    result.forEach(row => {
-      if (row._field && row._value !== undefined) {
-        data[row._field] = row._value;
-      }
-    });
-
-    return data;
-  } catch (error) {
-    console.error('Error getting villager fields:', error);
-    return null;
-  }
-}
 
 async function getActiveSensors() {
   const query = `
@@ -184,205 +172,82 @@ app.get('/api/health', (req, res) => {
 
 // Get all villagers - WITH PHONE NUMBERS
 app.get('/api/villagers', async (req, res) => {
-  console.log('📥 GET /api/villagers called');
-
   try {
-    // Get all name entries first
-    const nameQuery = `
-      from(bucket: "${INFLUX_CONFIG.bucket}")
-        |> range(start: -365d)
-        |> filter(fn: (r) => r._measurement == "villagers")
-        |> filter(fn: (r) => r._field == "name")
-        |> group()
-        |> sort(columns: ["_time"], desc: true)
-    `;
-
-    const nameResult = await queryInfluxDB(nameQuery);
-
-    // Process results - get unique latest entries
-    const villagersMap = new Map();
-
-    nameResult.forEach(row => {
-      const aadhaar = row.aadhaar_number;
-      const time = new Date(row._time).getTime();
-
-      // Only keep the latest entry for each aadhaar
-      if (!villagersMap.has(aadhaar) || time > villagersMap.get(aadhaar).time) {
-        villagersMap.set(aadhaar, {
-          time: time,
-          aadhaar_number: aadhaar,
-          name: row._value,
-          village: row.village || '',
-          panchayat: row.panchayat || '',
-          status: row.status || 'active'
-        });
-      }
-    });
-
-    // Get phone numbers for active villagers
-    const villagers = [];
-    let idCounter = 1;
-
-    for (const [aadhaar, data] of villagersMap) {
-      if (data.status !== 'deleted') {
-        // Get phone number for this villager
-        const phoneQuery = `
-          from(bucket: "${INFLUX_CONFIG.bucket}")
-            |> range(start: -365d)
-            |> filter(fn: (r) => r._measurement == "villagers")
-            |> filter(fn: (r) => r.aadhaar_number == "${aadhaar}")
-            |> filter(fn: (r) => r._field == "phone")
-            |> last()
-        `;
-
-        const phoneResult = await queryInfluxDB(phoneQuery);
-        const phone = phoneResult.length > 0 ? phoneResult[0]._value : '';
-
-        villagers.push({
-          id: idCounter++,
-          aadhaar_number: aadhaar,
-          name: data.name || 'Unknown',
-          phone: phone || '',
-          village: data.village || '',
-          panchayat: data.panchayat || ''
-        });
-      }
-    }
-
-    console.log(`✅ Found ${villagers.length} active villagers`);
+    const [rows] = await db.query(
+      `SELECT 
+         id,
+         aadhaar AS aadhaar_number,
+         name,
+         phone,
+         village,
+         panchayat
+       FROM villagers
+       ORDER BY created_at DESC`
+    );
 
     res.json({
       success: true,
-      villagers: villagers,
-      count: villagers.length
+      villagers: rows,
+      count: rows.length
     });
-
-  } catch (error) {
-    console.error('❌ Error fetching villagers:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch villagers: ' + error.message,
-      villagers: []
-    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 // Get a specific villager - WITH ALL FIELDS
 app.get('/api/villagers/:aadhaarNumber', async (req, res) => {
   try {
     const { aadhaarNumber } = req.params;
-    console.log(`📥 GET /api/villagers/${aadhaarNumber} called`);
 
-    const data = await getVillagerFields(aadhaarNumber);
+    const [rows] = await db.query(
+      `SELECT 
+         id,
+         aadhaar AS aadhaar_number,
+         name,
+         phone,
+         village,
+         panchayat,
+         occupation,
+         address
+       FROM villagers
+       WHERE aadhaar = ?`,
+      [aadhaarNumber]
+    );
 
-    if (!data || data.status === 'deleted') {
-      return res.status(404).json({
-        success: false,
-        error: 'Villager not found'
-      });
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Villager not found' });
     }
 
-    const villager = {
-      aadhaar_number: aadhaarNumber,
-      name: data.name || '',
-      phone: data.phone || '',
-      village: data.village || '',
-      panchayat: data.panchayat || '',
-      address: data.address || '',
-      father_name: data.father_name || '',
-      occupation: data.occupation || '',
-      role: data.role || 'villager'
-    };
-
-    res.json({
-      success: true,
-      villager: villager
-    });
-  } catch (error) {
-    console.error('❌ Error fetching villager:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch villager'
-    });
+    res.json({ success: true, villager: rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // Add new villager
 app.post('/api/villagers', async (req, res) => {
   try {
-    const {
-      aadhaarNumber,
-      name,
-      phone,
-      village,
-      panchayat,
-      address,
-      fatherName,
-      occupation
-    } = req.body;
+    const { aadhaarNumber, name, phone, village, panchayat, occupation, address } = req.body;
 
-    console.log('📥 POST /api/villagers called with data:', req.body);
-
-    // Validation
-    if (!aadhaarNumber || !name || !village || !panchayat) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: Aadhaar, Name, Village, and Panchayat are required'
-      });
+    if (!aadhaarNumber || !name || !phone || !village || !panchayat) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
 
-    if (aadhaarNumber.length !== 12 || !/^\d+$/.test(aadhaarNumber)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid Aadhaar number. Must be 12 digits.'
-      });
+    await db.query(
+      `INSERT INTO villagers
+       (aadhaar, name, phone, village, panchayat, occupation, address)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [aadhaarNumber, name, phone, village, panchayat, occupation, address]
+    );
+
+    res.json({ success: true, message: 'Villager added successfully' });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ success: false, error: 'Aadhaar or phone already exists' });
     }
-
-    // Write villager data
-    const writeSuccess = await writeToInfluxDB('villagers', {
-      aadhaar_number: aadhaarNumber,
-      village: village,
-      panchayat: panchayat,
-      status: 'active'
-    }, {
-      name: name,
-      phone: phone || '',
-      address: address || '',
-      father_name: fatherName || '',
-      occupation: occupation || '',
-      role: 'villager'
-    });
-
-    if (!writeSuccess) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to save villager to database'
-      });
-    }
-
-    console.log('✅ New villager added:', { aadhaarNumber, name });
-
-    res.json({
-      success: true,
-      message: 'Villager added successfully',
-      data: {
-        aadhaar_number: aadhaarNumber,
-        name: name,
-        phone: phone || '',
-        village: village,
-        panchayat: panchayat,
-        address: address || '',
-        father_name: fatherName || '',
-        occupation: occupation || ''
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error adding villager:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to add villager: ' + error.message
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -390,264 +255,190 @@ app.post('/api/villagers', async (req, res) => {
 app.delete('/api/villagers/:aadhaarNumber', async (req, res) => {
   try {
     const { aadhaarNumber } = req.params;
-    console.log(`🗑️ DELETE /api/villagers/${aadhaarNumber} called`);
 
-    if (!aadhaarNumber) {
-      return res.status(400).json({
-        success: false,
-        error: 'Aadhaar number is required'
-      });
+    const [result] = await db.query(
+      `DELETE FROM villagers WHERE aadhaar = ?`,
+      [aadhaarNumber]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, error: 'Villager not found' });
     }
 
-    // Get villager details
-    const data = await getVillagerFields(aadhaarNumber);
-
-    if (!data || data.status === 'deleted') {
-      return res.status(404).json({
-        success: false,
-        error: 'Villager not found'
-      });
-    }
-
-    // Mark as deleted
-    const writeSuccess = await writeToInfluxDB('villagers', {
-      aadhaar_number: aadhaarNumber,
-      village: data.village || 'unknown',
-      panchayat: data.panchayat || 'unknown',
-      status: 'deleted'
-    }, {
-      name: data.name || '',
-      phone: data.phone || '',
-      deleted: 'true',
-      deleted_at: new Date().toISOString()
-    });
-
-    if (!writeSuccess) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to delete villager from database'
-      });
-    }
-
-    console.log('✅ Villager marked as deleted:', aadhaarNumber);
-
-    res.json({
-      success: true,
-      message: 'Villager deleted successfully'
-    });
-
-  } catch (error) {
-    console.error('❌ Error deleting villager:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to delete villager: ' + error.message
-    });
+    res.json({ success: true, message: 'Villager deleted' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
+
+
 
 // Update a villager
 app.put('/api/villagers/:aadhaarNumber', async (req, res) => {
   try {
     const { aadhaarNumber } = req.params;
-    const {
-      name,
-      phone,
-      village,
-      panchayat,
-      address,
-      fatherName,
-      occupation
-    } = req.body;
+    const { name, phone, village, panchayat, occupation, address } = req.body;
 
-    console.log('📝 PUT /api/villagers/:aadhaarNumber called:', aadhaarNumber, req.body);
+    const [result] = await db.query(
+      `UPDATE villagers
+       SET name=?, phone=?, village=?, panchayat=?, occupation=?, address=?
+       WHERE aadhaar=?`,
+      [name, phone, village, panchayat, occupation, address, aadhaarNumber]
+    );
 
-    if (!aadhaarNumber) {
-      return res.status(400).json({
-        success: false,
-        error: 'Aadhaar number is required'
-      });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, error: 'Villager not found' });
     }
 
-    // Check if villager exists and is active
-    const existingData = await getVillagerFields(aadhaarNumber);
-    if (!existingData || existingData.status !== 'active') {
+    res.json({ success: true, message: 'Villager updated' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+//to see sensors that belong to particular villager
+app.get('/api/villagers/:aadhaar/sensors', async (req, res) => {
+  try {
+    const { aadhaar } = req.params;
+
+    // 1️⃣ Get villager
+    const [[villager]] = await db.query(
+      `SELECT id, name, aadhaar, phone, village
+       FROM villagers WHERE aadhaar = ?`,
+      [aadhaar]
+    );
+
+    if (!villager) {
       return res.status(404).json({
         success: false,
         error: 'Villager not found'
       });
     }
 
-    const updateData = {};
-    if (name !== undefined) updateData.name = name;
-    if (phone !== undefined) updateData.phone = phone;
-    if (village !== undefined) updateData.village = village;
-    if (panchayat !== undefined) updateData.panchayat = panchayat;
-    if (address !== undefined) updateData.address = address;
-    if (fatherName !== undefined) updateData.father_name = fatherName;
-    if (occupation !== undefined) updateData.occupation = occupation;
+    // 2️⃣ Get mapped sensors (MySQL)
+    const [sensors] = await db.query(
+      `SELECT s.id, s.devEUI, s.name
+       FROM sensors s
+       JOIN villager_sensors vs ON vs.sensor_id = s.id
+       WHERE vs.villager_id = ?`,
+      [villager.id]
+    );
 
-    const writeSuccess = await writeToInfluxDB('villagers', {
-      aadhaar_number: aadhaarNumber,
-      village: village || existingData.village || 'unknown',
-      panchayat: panchayat || existingData.panchayat || 'unknown',
-      status: 'active'
-    }, {
-      ...updateData,
-      role: 'villager',
-      updated_at: new Date().toISOString()
-    });
+    const result = [];
 
-    if (!writeSuccess) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to update villager in database'
+    // 3️⃣ Fetch latest measurement from InfluxDB
+    for (const sensor of sensors) {
+      const flux = `
+        from(bucket: "${INFLUX_CONFIG.bucket}")
+          |> range(start: -1h)
+          |> filter(fn: (r) => r._measurement == "sensor_data")
+          |> filter(fn: (r) => r.devEUI == "${sensor.devEUI}")
+          |> sort(columns: ["_time"], desc: true)
+          |> limit(n: 1)
+      `;
+
+      const data = await queryInfluxDB(flux);
+
+      let measurement = 'No data';
+      let time = '';
+      let status = 'Offline';
+
+      if (data.length > 0) {
+        measurement = `${data[0]._field}: ${data[0]._value}`;
+        const t = new Date(data[0]._time);
+        time = t.toLocaleString();
+
+        status = (Date.now() - t.getTime()) / 1000 <= 22
+          ? 'Live'
+          : 'Offline';
+      }
+
+      result.push({
+        devEUI: sensor.devEUI,
+        name: sensor.name,
+        measurement,
+        time,
+        status
       });
     }
 
-    console.log('✅ Villager updated:', aadhaarNumber);
-
     res.json({
       success: true,
-      message: 'Villager updated successfully',
-      data: {
-        aadhaar_number: aadhaarNumber,
-        ...updateData
-      }
+      villager,
+      sensors: result
     });
 
-  } catch (error) {
-    console.error('❌ Error updating villager:', error);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({
       success: false,
-      error: 'Failed to update villager: ' + error.message
+      error: err.message
     });
   }
 });
+
 
 // ==================== ADMIN DASHBOARD ====================
 
 app.get('/api/admin/dashboard', async (req, res) => {
   try {
-    const activeSensorCount = await getActiveSensorCount();
-    const activeSensorEUIs = await getActiveSensors();
-    const totalSensors = activeSensorEUIs.length;
+    // Sensors → InfluxDB (keep)
+    const totalSensors = await getActiveSensorCount();
 
-    // Get all name entries first
-    const nameQuery = `
-      from(bucket: "${INFLUX_CONFIG.bucket}")
-        |> range(start: -365d)
-        |> filter(fn: (r) => r._measurement == "villagers")
-        |> filter(fn: (r) => r._field == "name")
-        |> group()
-        |> sort(columns: ["_time"], desc: true)
-    `;
+    // Villagers → MySQL (NEW)
+    const [[{ totalVillagers }]] = await db.query(
+      `SELECT COUNT(*) AS totalVillagers FROM villagers`
+    );
 
-    const nameResult = await queryInfluxDB(nameQuery);
-
-    // Process results - get unique latest entries
-    const villagersMap = new Map();
-
-    nameResult.forEach(row => {
-      const aadhaar = row.aadhaar_number;
-      const time = new Date(row._time).getTime();
-
-      if (!villagersMap.has(aadhaar) || time > villagersMap.get(aadhaar).time) {
-        villagersMap.set(aadhaar, {
-          time: time,
-          aadhaar_number: aadhaar,
-          name: row._value,
-          village: row.village || '',
-          panchayat: row.panchayat || '',
-          status: row.status || 'active'
-        });
-      }
-    });
-
-    // Count active villagers
-    const activeVillagers = Array.from(villagersMap.values())
-      .filter(v => v.status !== 'deleted');
-
-    const totalVillagers = activeVillagers.length;
-
-    // Get phone numbers for recent villagers
-    const recentVillagers = [];
-
-    // Get top 5 most recent active villagers
-    const recentActive = activeVillagers
-      .sort((a, b) => b.time - a.time)
-      .slice(0, 5);
-
-    for (const data of recentActive) {
-      // Get phone number for this villager
-      const phoneQuery = `
-        from(bucket: "${INFLUX_CONFIG.bucket}")
-          |> range(start: -365d)
-          |> filter(fn: (r) => r._measurement == "villagers")
-          |> filter(fn: (r) => r.aadhaar_number == "${data.aadhaar_number}")
-          |> filter(fn: (r) => r._field == "phone")
-          |> last()
-      `;
-
-      const phoneResult = await queryInfluxDB(phoneQuery);
-      const phone = phoneResult.length > 0 ? phoneResult[0]._value : '';
-
-      recentVillagers.push({
-        name: data.name || 'Unknown',
-        aadhaar_number: data.aadhaar_number,
-        village: data.village || '',
-        phone: phone || ''
-      });
-    }
+    const [recentVillagers] = await db.query(
+      `SELECT 
+         name,
+         aadhaar AS aadhaar_number,
+         village,
+         phone
+       FROM villagers
+       ORDER BY created_at DESC
+       LIMIT 5`
+    );
+    
 
     res.json({
       success: true,
       data: {
         statistics: {
-          totalVillagers: totalVillagers,
-          totalSensors: activeSensorCount,
+          totalVillagers,
+          totalSensors,
           totalVillages: 1,
           activeAlerts: 0
-        },        
-        recentVillagers: recentVillagers,
+        },
+        recentVillagers,
         recentSensors: []
       }
     });
   } catch (error) {
     console.error('❌ Dashboard error:', error);
-    res.json({
-      success: true,
-      data: {
-        statistics: {
-          totalVillagers: 0,
-          totalSensors: 0,
-          totalVillages: 1,
-          activeAlerts: 0
-        },
-        recentVillagers: [],
-        recentSensors: []
-      }
-    });
+    res.status(500).json({ success: false });
   }
 });
+
 
 // ==================== OTHER ENDPOINTS ====================
 
 app.get('/api/sensors', async (req, res) => {
   try {
-    const sensorQuery = `
-      from(bucket: "${INFLUX_CONFIG.bucket}")
-        |> range(start: -365d)
-        |> filter(fn: (r) => r._measurement == "sensors")
-        |> filter(fn: (r) => r._field == "deviceName")
-        |> group(columns: ["devEUI"])
-        |> last()
-    `;
+    // 1️⃣ Get sensor metadata from MySQL
+    const [sensorRows] = await db.query(
+      `SELECT id, devEUI, name, village, panchayat
+       FROM sensors
+       ORDER BY id DESC`
+    );
 
-    const sensorsRaw = await queryInfluxDB(sensorQuery);
     const sensors = [];
 
-    for (const s of sensorsRaw) {
-      const devEUI = s.devEUI;
+    // 2️⃣ For each sensor, get latest measurement from InfluxDB
+    for (const sensor of sensorRows) {
+      const { devEUI, name, village, panchayat } = sensor;
 
       const dataQuery = `
         from(bucket: "${INFLUX_CONFIG.bucket}")
@@ -666,63 +457,258 @@ app.get('/api/sensors', async (req, res) => {
 
       if (data.length > 0) {
         latestValue = `${data[0]._field}: ${data[0]._value}`;
-      
+
         const t = new Date(data[0]._time);
-        latestTime = t.toLocaleString(); // DATE + TIME
-      
+        latestTime = t.toLocaleString();
+
         // 🔥 STATUS LOGIC
         const now = new Date();
-        const diffMs = now - t;
-        const diffMinutes = diffMs / (1000 * 60);
-        const diffSeconds = diffMs / 1000;
+        const diffSeconds = (now - t) / 1000;
         status = diffSeconds <= 22 ? 'Live' : 'Offline';
       }
 
-
       sensors.push({
         devEUI,
-        name: s._value,
+        name,
+        village,
+        panchayat,
         measurement: latestValue,
         time: latestTime,
         status
       });
-      
     }
 
     res.json({ success: true, sensors });
+
   } catch (err) {
+    console.error('❌ Sensors fetch error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
+// GET single sensor (for edit)
+app.get('/api/sensors/:devEUI', async (req, res) => {
+  try {
+    const { devEUI } = req.params;
+
+    const [rows] = await db.query(
+      `SELECT s.id, s.devEUI, s.name, s.village, s.panchayat,
+              v.phone
+       FROM sensors s
+       LEFT JOIN villager_sensors vs ON vs.sensor_id = s.id
+       LEFT JOIN villagers v ON v.id = vs.villager_id
+       WHERE s.devEUI = ?`,
+      [devEUI]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Sensor not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      sensor: rows[0]
+    });
+
+  } catch (err) {
+    console.error('Get sensor error:', err);
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// UPDATE sensor (edit)
+app.put('/api/sensors/:devEUI', async (req, res) => {
+  const { devEUI } = req.params;
+  const { deviceName, village, panchayat, phone } = req.body;
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // Update sensor metadata
+    const [result] = await conn.query(
+      `UPDATE sensors
+       SET name = ?, village = ?, panchayat = ?
+       WHERE devEUI = ?`,
+      [deviceName, village || null, panchayat || null, devEUI]
+    );
+
+    if (result.affectedRows === 0) {
+      throw new Error('Sensor not found');
+    }
+
+    // Update mapping (optional)
+    await conn.query(
+      `DELETE FROM villager_sensors WHERE sensor_id =
+       (SELECT id FROM sensors WHERE devEUI = ?)`,
+      [devEUI]
+    );
+
+    if (phone) {
+      const [[villager]] = await conn.query(
+        `SELECT id FROM villagers WHERE phone = ?`,
+        [phone]
+      );
+
+      if (!villager) {
+        throw new Error('Villager not found');
+      }
+
+      await conn.query(
+        `INSERT INTO villager_sensors (villager_id, sensor_id)
+         VALUES (?, (SELECT id FROM sensors WHERE devEUI = ?))`,
+        [villager.id, devEUI]
+      );
+    }
+
+    await conn.commit();
+    res.json({ success: true });
+
+  } catch (err) {
+    await conn.rollback();
+    res.status(400).json({ success: false, error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+
+
+
 app.post('/api/sensors', async (req, res) => {
-  const { devEUI, deviceName } = req.body;
+  const { devEUI, deviceName, village, panchayat, phone } = req.body;
 
   if (!devEUI || !deviceName) {
     return res.status(400).json({
       success: false,
-      error: 'devEUI and deviceName required'
+      error: 'devEUI and deviceName are required'
     });
   }
 
-  const success = await writeToInfluxDB(
-    'sensors',
-    { devEUI },
-    { deviceName }
-  );
+  const conn = await db.getConnection();
 
-  if (!success) {
-    return res.status(500).json({
+  try {
+    await conn.beginTransaction();
+
+    // 1️⃣ Insert sensor (standalone allowed)
+    const [sensorResult] = await conn.query(
+      `INSERT INTO sensors (devEUI, name, village, panchayat)
+       VALUES (?, ?, ?, ?)`,
+      [devEUI, deviceName, village || null, panchayat || null]
+    );
+
+    const sensorId = sensorResult.insertId;
+
+    // 2️⃣ OPTIONAL: map sensor → villager using phone
+    if (phone) {
+      const [[villager]] = await conn.query(
+        `SELECT id FROM villagers WHERE phone = ?`,
+        [phone]
+      );
+
+      if (!villager) {
+        throw new Error('No villager found with this phone number');
+      }
+
+      await conn.query(
+        `INSERT INTO villager_sensors (villager_id, sensor_id)
+         VALUES (?, ?)`,
+        [villager.id, sensorId]
+      );
+    }
+
+    await conn.commit();
+
+    res.json({
+      success: true,
+      message: phone
+        ? 'Sensor registered and mapped to villager'
+        : 'Sensor registered successfully'
+    });
+
+  } catch (err) {
+    await conn.rollback();
+
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({
+        success: false,
+        error: 'Sensor already exists'
+      });
+    }
+
+    res.status(400).json({
       success: false,
-      error: 'Failed to save sensor'
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+app.delete('/api/sensors/:devEUI', async (req, res) => {
+  const { devEUI } = req.params;
+
+  if (!devEUI) {
+    return res.status(400).json({
+      success: false,
+      error: 'devEUI is required'
     });
   }
 
-  res.json({
-    success: true,
-    message: 'Sensor registered'
-  });
+  const conn = await db.getConnection();
+
+  try {
+    await conn.beginTransaction();
+
+    // 1️⃣ Get sensor id
+    const [[sensor]] = await conn.query(
+      `SELECT id FROM sensors WHERE devEUI = ?`,
+      [devEUI]
+    );
+
+    if (!sensor) {
+      return res.status(404).json({
+        success: false,
+        error: 'Sensor not found'
+      });
+    }
+
+    // 2️⃣ Remove mappings
+    await conn.query(
+      `DELETE FROM villager_sensors WHERE sensor_id = ?`,
+      [sensor.id]
+    );
+
+    // 3️⃣ Delete sensor
+    await conn.query(
+      `DELETE FROM sensors WHERE id = ?`,
+      [sensor.id]
+    );
+
+    await conn.commit();
+
+    res.json({
+      success: true,
+      message: 'Sensor deleted successfully'
+    });
+
+  } catch (err) {
+    await conn.rollback();
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
 });
+
 
 
 app.post('/api/login', (req, res) => {

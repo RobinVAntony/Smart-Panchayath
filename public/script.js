@@ -153,28 +153,28 @@ document.addEventListener('DOMContentLoaded', async function() {
 
         // Update sensor status table
         function updateSensorStatusTable(sensors) {
-            const tbody = document.getElementById('sensorStatusTable');
-            tbody.innerHTML = '';
-          
-            if (sensors.length === 0) {
-              tbody.innerHTML = '<tr><td colspan="4">No sensors found</td></tr>';
-              return;
-            }
-          
-            sensors.slice(0, 5).forEach(sensor => {
-              const row = document.createElement('tr');
-          
-              const badgeClass = sensor.status === 'Live' ? 'bg-success' : 'bg-secondary';
-          
-              row.innerHTML = `
-                <td>${sensor.name}</td>
-                <td>—</td>
-                <td><span class="badge ${badgeClass}">${sensor.status}</span></td>
-                <td>${sensor.measurement}</td>
-              `;
-              tbody.appendChild(row);
-            });
+          const tbody = document.getElementById('sensorStatusTable');
+          tbody.innerHTML = '';
+        
+          if (sensors.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4">No sensors found</td></tr>';
+            return;
           }
+        
+          sensors.slice(0, 5).forEach(sensor => {
+            const row = document.createElement('tr');
+        
+            const badgeClass = sensor.status === 'Live' ? 'bg-success' : 'bg-secondary';
+        
+            row.innerHTML = `
+              <td>${sensor.name}</td>
+              <td>—</td>
+              <td><span class="badge ${badgeClass}">${sensor.status}</span></td>
+              <td>${sensor.measurement}</td>
+            `;
+            tbody.appendChild(row);
+          });
+        }
           
 
         // Update villagers management table
@@ -209,33 +209,133 @@ document.addEventListener('DOMContentLoaded', async function() {
                         </button>
                     </td>
                 `;
+                row.style.cursor = 'pointer';
+
+                row.addEventListener('click', (e) => {
+                  if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+                  openVillagerSensors(villager.aadhaar_number);
+                });
+
                 tbody.appendChild(row);
             });
         }
 
-        // Update sensors management table
-        function updateSensorsTable(sensors) {
-            const tbody = document.getElementById('allSensorsTable');
-            tbody.innerHTML = '';
-          
-            if (sensors.length === 0) {
-              tbody.innerHTML = '<tr><td colspan="3">No sensors found</td></tr>';
+        //to see sensor that belong to particular villager
+        async function openVillagerSensors(aadhaar) {
+          try {
+            const res = await fetch(`${API_BASE}/villagers/${aadhaar}/sensors`);
+            const data = await res.json();
+        
+            if (!data.success) {
+              showToast('Failed to load sensors', 'danger');
               return;
             }
-          
-            sensors.forEach(sensor => {
-              const row = document.createElement('tr');
-              row.innerHTML = `
-                <td>${sensor.devEUI}</td>
-                <td>${sensor.name}</td>
-                <td>
-                  ${sensor.measurement}
-                  ${sensor.time ? `<span class="text-muted float-end">${sensor.time}</span>` : ''}
-                </td>
+        
+            // Villager info
+            document.getElementById('villagerSensorInfo').innerHTML = `
+              <b>Name:</b> ${data.villager.name}<br>
+              <b>Aadhaar:</b> ${data.villager.aadhaar}<br>
+              <b>Phone:</b> ${data.villager.phone}<br>
+              <b>Village:</b> ${data.villager.village}
+            `;
+        
+            const tbody = document.getElementById('villagerSensorsTable');
+            tbody.innerHTML = '';
+        
+            if (data.sensors.length === 0) {
+              tbody.innerHTML = `<tr><td colspan="5">No sensors mapped</td></tr>`;
+            }
+        
+            data.sensors.forEach(s => {
+              const badge = s.status === 'Live'
+                ? 'bg-success'
+                : 'bg-secondary';
+        
+              tbody.innerHTML += `
+                <tr>
+                  <td>${s.devEUI}</td>
+                  <td>${s.name}</td>
+                  <td><span class="badge ${badge}">${s.status}</span></td>
+                  <td>${s.measurement}</td>
+                  <td>${s.time}</td>
+                </tr>
               `;
-              tbody.appendChild(row);
             });
+        
+            new bootstrap.Modal(
+              document.getElementById('villagerSensorsModal')
+            ).show();
+        
+          } catch (err) {
+            console.error(err);
+            showToast('Error loading villager sensors', 'danger');
+          }
         }
+        
+
+        // Update sensors management table
+        function updateSensorsTable(sensors) {
+          const tbody = document.getElementById('allSensorsTable');
+          tbody.innerHTML = '';
+        
+          if (sensors.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4">No sensors found</td></tr>';
+            return;
+          }
+        
+          sensors.forEach(sensor => {
+            const row = document.createElement('tr');
+        
+            row.innerHTML = `
+              <td>${sensor.devEUI}</td>
+              <td>${sensor.name}</td>
+              <td>
+                <div>${sensor.measurement || 'No data'}</div>
+                <small class="text-muted">${sensor.time || ''}</small>
+              </td>
+              <td>
+                <button class="btn btn-sm btn-outline-primary"
+                  onclick="editSensor('${sensor.devEUI}')">Edit</button>
+                <button class="btn btn-sm btn-outline-danger"
+                  onclick="deleteSensor('${sensor.devEUI}')">Delete</button>
+              </td>
+            `;
+        
+            tbody.appendChild(row);
+          });
+        }
+        
+
+        async function deleteSensor(devEUI) {
+          if (!confirm(`Are you sure you want to delete sensor ${devEUI}?`)) {
+            return;
+          }
+        
+          try {
+            const response = await fetch(`${API_BASE}/sensors/${devEUI}`, {
+              method: 'DELETE'
+            });
+        
+            const result = await response.json();
+        
+            if (result.success) {
+              showToast('✅ Sensor deleted successfully', 'success');
+        
+              // Refresh sensor tables
+              loadAllSensors();
+              loadSensorsForStatus();
+              loadDashboard();
+        
+            } else {
+              showToast('❌ ' + result.error, 'danger');
+            }
+        
+          } catch (error) {
+            console.error('Delete sensor error:', error);
+            showToast('⚠️ Failed to delete sensor', 'warning');
+          }
+        }
+        
           
         
           
@@ -247,10 +347,94 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
 
         function showAddSensorModal() {
-            const modal = new bootstrap.Modal(document.getElementById('addSensorModal'));
-            modal.show();
+          const form = document.getElementById('sensorForm');
+          form.reset();
+          form.devEUI.disabled = false;
+        
+          document.getElementById('sensorMode').value = 'add';
+        
+          const title = document.querySelector('#addSensorModal .modal-title');
+          if (title) title.textContent = 'Add New Sensor';
+        
+          new bootstrap.Modal(
+            document.getElementById('addSensorModal')
+          ).show();
         }
+        
 
+        //Edit Sensor
+        async function editSensor(devEUI) {
+          try {
+            const res = await fetch(`${API_BASE}/sensors/${devEUI}`);
+            const data = await res.json();
+        
+            if (!data.success) {
+              showToast('Failed to load sensor', 'danger');
+              return;
+            }
+        
+            const s = data.sensor;
+
+        
+            document.getElementById('editDevEUI').value = s.devEUI;
+            document.getElementById('editDeviceName').value = s.name;
+            document.getElementById('editVillage').value = s.village || '';
+            document.getElementById('editPanchayat').value = s.panchayat || '';
+            document.getElementById('editSensorPhone').value = s.phone || '';
+
+        
+            new bootstrap.Modal(
+              document.getElementById('editSensorModal')
+            ).show();
+            
+            
+          } catch (err) {
+            console.error(err);
+            showToast('Error loading sensor', 'danger');
+          }
+        }
+        
+        //Update Sensor
+        async function updateSensor() {
+          const devEUI = document.getElementById('editDevEUI').value;
+        
+          const payload = {
+            deviceName: document.getElementById('editDeviceName').value,
+            village: document.getElementById('editVillage').value,
+            panchayat: document.getElementById('editPanchayat').value,
+            phone: document.getElementById('editSensorPhone').value
+
+          };
+        
+          try {
+            const res = await fetch(`${API_BASE}/sensors/${devEUI}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+        
+            const result = await res.json();
+        
+            if (result.success) {
+              showToast('Sensor updated successfully', 'success');
+        
+              bootstrap.Modal.getInstance(
+                document.getElementById('editSensorModal')
+              ).hide();
+        
+              loadAllSensors();
+              loadSensorsForStatus();
+              loadDashboard();
+        
+            } else {
+              showToast(result.error, 'danger');
+            }
+        
+          } catch (err) {
+            console.error(err);
+            showToast('Update failed', 'danger');
+          }
+        }
         // Save villager
         async function saveVillager() {
             const form = document.getElementById('villagerForm');
@@ -310,7 +494,6 @@ async function editVillager(aadhaarNumber) {
       document.getElementById('editAadhaarNumber').value = villager.aadhaar_number;
       document.getElementById('editAadhaarDisplay').value = villager.aadhaar_number;
       document.getElementById('editName').value = villager.name || '';
-      document.getElementById('editFatherName').value = villager.father_name || '';
       document.getElementById('editPhone').value = villager.phone || '';
       document.getElementById('editVillage').value = villager.village || '';
       document.getElementById('editPanchayat').value = villager.panchayat || '';
@@ -341,7 +524,6 @@ async function updateVillager() {
       village: document.getElementById('editVillage').value || '',
       panchayat: document.getElementById('editPanchayat').value || '',
       address: document.getElementById('editAddress').value || '',
-      father_name: document.getElementById('editFatherName').value || '',
       occupation: document.getElementById('editOccupation').value || ''
     };
 
@@ -431,35 +613,43 @@ async function deleteVillager(aadhaarNumber) {
 
         // Save sensor
         async function saveSensor() {
-            const form = document.getElementById('sensorForm');
-            const formData = new FormData(form);
-            const data = Object.fromEntries(formData);
-
-            try {
-                const response = await fetch(`${API_BASE}/sensors`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    showToast('Sensor added successfully!', 'success');
-                    bootstrap.Modal.getInstance(document.getElementById('addSensorModal')).hide();
-                    form.reset();
-
-                    loadDashboard();
-                    loadAllSensors();
-                    loadSensorsForStatus();
-                } else {
-                    showToast('Error: ' + result.error, 'danger');
-                }
-            } catch (error) {
-                showToast('Failed to add sensor: ' + error.message, 'danger');
+          const form = document.getElementById('sensorForm');
+          const data = Object.fromEntries(new FormData(form));
+        
+          if (!data.devEUI || !data.deviceName) {
+            showToast('DevEUI and Device Name are required', 'danger');
+            return;
+          }
+        
+          try {
+            const res = await fetch(`${API_BASE}/sensors`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data)
+            });
+        
+            const result = await res.json();
+        
+            if (result.success) {
+              showToast('Sensor added successfully', 'success');
+        
+              bootstrap.Modal.getInstance(
+                document.getElementById('addSensorModal')
+              ).hide();
+        
+              form.reset();
+              loadAllSensors();
+              loadDashboard();
+            } else {
+              showToast(result.error, 'danger');
             }
+        
+          } catch (err) {
+            console.error(err);
+            showToast('Add sensor failed', 'danger');
+          }
         }
-
+        
         // Utility functions
         function refreshDashboard() {
             loadDashboard();

@@ -66,7 +66,6 @@ CREATE TABLE villagers (
     id SERIAL PRIMARY KEY,
     aadhaar_number VARCHAR(12) UNIQUE NOT NULL,
     name VARCHAR(100) NOT NULL,
-    father_name VARCHAR(100),
     phone VARCHAR(15),
     email VARCHAR(100),
     village_id INTEGER REFERENCES villages(id),

@@ -17,6 +17,18 @@ const writeApi = influx.getWriteApi(
   process.env.INFLUX_BUCKET
 );
 
+//MySql
+const mysql = require('mysql2/promise');
+
+const db = mysql.createPool({
+  host: process.env.MYSQL_HOST,
+  user: process.env.MYSQL_USER,
+  password: process.env.MYSQL_PASSWORD,
+  database: process.env.MYSQL_DATABASE,
+  port: process.env.MYSQL_PORT
+});
+
+
 // MQTT
 const client = mqtt.connect(MQTT_URL);
 
@@ -29,16 +41,13 @@ client.on('connect', () => {
  * Check if sensor exists
  */
 async function sensorExists(devEUI) {
-  const query = `
-    from(bucket: "${process.env.INFLUX_BUCKET}")
-      |> range(start: -365d)
-      |> filter(fn: (r) => r._measurement == "sensors")
-      |> filter(fn: (r) => r.devEUI == "${devEUI}")
-      |> limit(n: 1)
-  `;
-  const rows = await queryApi.collectRows(query);
+  const [rows] = await db.query(
+    `SELECT id FROM sensors WHERE devEUI = ? LIMIT 1`,
+    [devEUI]
+  );
   return rows.length > 0;
 }
+
 
 client.on('message', async (topic, message) => {
   try {
