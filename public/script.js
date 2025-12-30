@@ -1,6 +1,6 @@
-const API_BASE_URL = 'https://smart-panchayath.onrender.com/';
-const API_BASE = API_BASE_URL + '/api';
+const API_BASE = 'https://smart-panchayath.onrender.com/api';
 console.log('API Base:', API_BASE);
+
 
 console.log('Mobile Debug Info:');
 console.log('User Agent:', navigator.userAgent);
