@@ -1,7 +1,6 @@
 const API_BASE = 'https://smart-panchayath.onrender.com/api';
 console.log('API Base:', API_BASE);
 
-
 console.log('Mobile Debug Info:');
 console.log('User Agent:', navigator.userAgent);
 console.log('Platform:', navigator.platform);
@@ -349,9 +348,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         function showAddSensorModal() {
           const form = document.getElementById('sensorForm');
           form.reset();
-          form.devEUI.disabled = false;
         
-          document.getElementById('sensorMode').value = 'add';
+          // ensure devEUI is enabled
+          form.querySelector('[name="devEUI"]').disabled = false;
         
           const title = document.querySelector('#addSensorModal .modal-title');
           if (title) title.textContent = 'Add New Sensor';
@@ -359,8 +358,7 @@ document.addEventListener('DOMContentLoaded', async function() {
           new bootstrap.Modal(
             document.getElementById('addSensorModal')
           ).show();
-        }
-        
+        }        
 
         //Edit Sensor
         async function editSensor(devEUI) {

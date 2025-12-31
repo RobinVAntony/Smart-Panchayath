@@ -132,19 +132,29 @@ async function getActiveSensors() {
 }
 
 
+const SENSOR_ACTIVE_THRESHOLD = 20; // seconds
+
 async function getActiveSensorCount() {
   const query = `
     from(bucket: "${INFLUX_CONFIG.bucket}")
-      |> range(start: -20s)
+      |> range(start: -5m)
       |> filter(fn: (r) => r._measurement == "sensor_data")
-      |> keep(columns: ["devEUI"])
       |> group(columns: ["devEUI"])
-      |> distinct(column: "devEUI")
+      |> sort(columns: ["_time"], desc: true)
+      |> limit(n: 1)
+      |> keep(columns: ["devEUI", "_time"])
   `;
 
   const rows = await queryInfluxDB(query);
-  return rows.length;
+  const now = Date.now();
+
+  return rows.filter(r => {
+    const diffSeconds =
+      (now - new Date(r._time).getTime()) / 1000;
+    return diffSeconds <= SENSOR_ACTIVE_THRESHOLD;
+  }).length;
 }
+
 
 
 // ==================== API ROUTES ====================
