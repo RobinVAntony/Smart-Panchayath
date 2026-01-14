@@ -1,4 +1,3 @@
-const API_BASE = 'https://smart-panchayath.onrender.com/api';
 console.log('API Base:', API_BASE);
 
 
@@ -7,11 +6,26 @@ console.log('User Agent:', navigator.userAgent);
 console.log('Platform:', navigator.platform);
 console.log('Screen:', screen.width, 'x', screen.height);
 
+//user context
+let USER_CTX = null;
+
+
+// ---------------- Panchayat Context ----------------
+
+const params = new URLSearchParams(window.location.search);
+const PANCHAYAT_ID = params.get('panchayatId');
+
+// If dashboard opened without selecting panchayat
+if (!PANCHAYAT_ID) {
+  window.location.href = '/select-location.html';
+}
+
+
 // Test the API immediately
 async function testAPIConnection() {
     try {
         console.log('Testing API connection to:', API_BASE + '/health');
-        const response = await fetch(API_BASE + '/health');
+        const response = await authFetch('/health');
         const data = await response.json();
         console.log('API Test Success:', data);
         return true;
@@ -23,47 +37,60 @@ async function testAPIConnection() {
 
 // SINGLE DOMContentLoaded listener
 document.addEventListener('DOMContentLoaded', async function() {
-    console.log('🚀 Dashboard loading...');
-    const apiConnected = await testAPIConnection();
+  console.log('🚀 Dashboard loading...');
 
-    if (apiConnected) {
-        loadDashboard();
-        loadAllVillagers();
-        loadAllSensors();
-        loadSensorsForStatus();
+  // 🔐 STEP A — load user context
+  const meRes = await authFetch(`me`);
+  if (!meRes) return;
 
-        // 🔄 AUTO REFRESH SENSOR DATA (Option A)
-        setInterval(() => {
-            loadAllSensors();
-            loadSensorsForStatus();
-        }, 5000);
+  USER_CTX = await meRes.json();
 
-    } else {
-        showToast('⚠️ Cannot connect to server. Please wait...', 'warning');
-        setTimeout(() => location.reload(), 5000);
-    }
+  // 🔒 STEP B — lock UI for non-panchayat admins
+  if (USER_CTX.role !== 'panchayat_admin') {
+    hideAddEditDeleteButtons();
+  }
+
+  // 🔗 STEP C — test API AFTER auth is confirmed
+  const apiConnected = await testAPIConnection();
+
+  if (apiConnected) {
+    loadDashboard();
+    loadAllVillagers();
+    loadAllSensors();
+    loadSensorsForStatus();
+
+    setInterval(() => {
+      loadDashboard();
+      loadAllSensors();
+      loadSensorsForStatus();
+    }, 5000);
+  }
 });
 
 
+
         // Section navigation
-        function showSection(section) {
-            document.getElementById('dashboardSection').style.display = 'none';
-            document.getElementById('villagersSection').style.display = 'none';
-            document.getElementById('sensorsSection').style.display = 'none';
-
-            document.getElementById(section + 'Section').style.display = 'block';
-
-            document.querySelectorAll('.sidebar .nav-link').forEach(link => {
-                link.classList.remove('active');
-            });
-            event.target.classList.add('active');
-        }
-
+        function showSection(event, section) {
+          document.getElementById('dashboardSection').style.display = 'none';
+          document.getElementById('villagersSection').style.display = 'none';
+          document.getElementById('sensorsSection').style.display = 'none';
+      
+          document.getElementById(section + 'Section').style.display = 'block';
+      
+          document.querySelectorAll('.sidebar .nav-link').forEach(link => {
+              link.classList.remove('active');
+          });
+      
+          event.currentTarget.classList.add('active');
+      }
+      
         // Load dashboard data
         async function loadDashboard() {
             try {
                 console.log('🔄 Loading dashboard...');
-                const response = await fetch(`${API_BASE}/admin/dashboard`);
+                const response = await authFetch(
+  `admin/dashboard?panchayatId=${PANCHAYAT_ID}`
+);
                 const data = await response.json();
 
                 if (data.success) {
@@ -80,11 +107,33 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
         }
 
+
+        //hide add and delete
+        function hideAddEditDeleteButtons() {
+
+          // Quick action buttons
+          document.querySelectorAll(
+            'button[onclick*="Add"], button[onclick*="Edit"], button[onclick*="Delete"]'
+          ).forEach(btn => btn.style.display = 'none');
+        
+          // Villagers table actions
+          document.querySelectorAll('#allVillagersTable button')
+            .forEach(btn => btn.style.display = 'none');
+        
+          // Sensors table actions
+          document.querySelectorAll('#allSensorsTable button')
+            .forEach(btn => btn.style.display = 'none');
+        }
+        
+
         // Load all villagers for management section
         async function loadAllVillagers() {
             try {
                 console.log('🔄 Loading villagers from:', `${API_BASE}/villagers`);
-                const response = await fetch(`${API_BASE}/villagers`);
+                const response = await authFetch(
+                  `/villagers?panchayatId=${PANCHAYAT_ID}`
+                );
+                
                 const data = await response.json();
                 console.log('📥 Villagers API response:', data);
 
@@ -104,7 +153,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Load all sensors for management section
         async function loadAllSensors() {
             try {
-                const response = await fetch(`${API_BASE}/sensors`);
+                const response = await authFetch(
+  `/sensors?panchayatId=${PANCHAYAT_ID}`
+);
                 const data = await response.json();
 
                 if (data.success) {
@@ -118,7 +169,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Load sensors for status table
         async function loadSensorsForStatus() {
             try {
-                const response = await fetch(`${API_BASE}/sensors`);
+                const response = await authFetch(
+  `/sensors?panchayatId=${PANCHAYAT_ID}`
+);
                 const data = await response.json();
 
                 if (data.success) {
@@ -223,7 +276,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         //to see sensor that belong to particular villager
         async function openVillagerSensors(aadhaar) {
           try {
-            const res = await fetch(`${API_BASE}/villagers/${aadhaar}/sensors`);
+            const res = await authFetch(`/villagers/${aadhaar}/sensors`);
             const data = await res.json();
         
             if (!data.success) {
@@ -312,7 +365,7 @@ document.addEventListener('DOMContentLoaded', async function() {
           }
         
           try {
-            const response = await fetch(`${API_BASE}/sensors/${devEUI}`, {
+            const response = await authFetch(`/sensors/${devEUI}`, {
               method: 'DELETE'
             });
         
@@ -349,9 +402,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         function showAddSensorModal() {
           const form = document.getElementById('sensorForm');
           form.reset();
-          form.devEUI.disabled = false;
         
-          document.getElementById('sensorMode').value = 'add';
+          // ensure devEUI is enabled
+          form.querySelector('[name="devEUI"]').disabled = false;
         
           const title = document.querySelector('#addSensorModal .modal-title');
           if (title) title.textContent = 'Add New Sensor';
@@ -359,13 +412,12 @@ document.addEventListener('DOMContentLoaded', async function() {
           new bootstrap.Modal(
             document.getElementById('addSensorModal')
           ).show();
-        }
-        
+        }        
 
         //Edit Sensor
         async function editSensor(devEUI) {
           try {
-            const res = await fetch(`${API_BASE}/sensors/${devEUI}`);
+            const res = await authFetch(`/sensors/${devEUI}`);
             const data = await res.json();
         
             if (!data.success) {
@@ -407,7 +459,7 @@ document.addEventListener('DOMContentLoaded', async function() {
           };
         
           try {
-            const res = await fetch(`${API_BASE}/sensors/${devEUI}`, {
+            const res = await authFetch(`/sensors/${devEUI}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
@@ -444,7 +496,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             console.log('📤 Saving villager data:', data);
 
             try {
-                const response = await fetch(`${API_BASE}/villagers`, {
+                const response = await authFetch(`/villagers`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -481,7 +533,7 @@ async function editVillager(aadhaarNumber) {
   try {
     console.log(`📝 Editing villager with Aadhaar: ${aadhaarNumber}`);
 
-    const response = await fetch(`${API_BASE}/villagers/${aadhaarNumber}`);
+    const response = await authFetch(`/villagers/${aadhaarNumber}`);
     const data = await response.json();
 
     console.log('Edit API response:', data);
@@ -530,7 +582,7 @@ async function updateVillager() {
     console.log('📤 Updating villager:', aadhaarNumber, updateData);
 
     // Make PUT request
-    const response = await fetch(`${API_BASE}/villagers/${aadhaarNumber}`, {
+    const response = await authFetch(`/villagers/${aadhaarNumber}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -574,7 +626,7 @@ async function deleteVillager(aadhaarNumber) {
   try {
     console.log(`🗑️ Deleting villager with Aadhaar: ${aadhaarNumber}`);
 
-    const response = await fetch(`${API_BASE}/villagers/${aadhaarNumber}`, {
+    const response = await authFetch(`/villagers/${aadhaarNumber}`, {
       method: 'DELETE',
       headers: {
         'Accept': 'application/json'
@@ -622,7 +674,7 @@ async function deleteVillager(aadhaarNumber) {
           }
         
           try {
-            const res = await fetch(`${API_BASE}/sensors`, {
+            const res = await authFetch(`/sensors`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(data)
