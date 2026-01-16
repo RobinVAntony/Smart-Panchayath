@@ -39,8 +39,8 @@
                             </div>
                             <div class="flex-grow-1 ms-3">
                                 <small>Logged in as</small>
-                                <div>Admin User</div>
-                            </div>
+                                <div id="sidebarUserInfo">Admin User</div>
+                              </div>                              
                         </div>
                     </div>
                 </nav>
@@ -50,7 +50,16 @@
             <div class="col-md-9 col-lg-10 ms-sm-auto px-4 py-4">
                 <!-- Dashboard Section -->
                 <div id="dashboardSection">
-                    <h2 class="mb-4">Dashboard Overview</h2>
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h2 class="mb-0">Dashboard Overview</h2>
+                      
+                        <!-- Context label (district / block / panchayat) -->
+                        <div id="dashboardPanchayatName"
+                             class="badge bg-success fs-6 px-3 py-2 d-none text-wrap">
+                        </div>
+                      </div>
+                      
+                      
 
                     <!-- Stats Cards -->
                     <div class="row mb-4">
@@ -285,8 +294,16 @@
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Panchayat *</label>
-                                <input type="text" class="form-control" name="panchayat" required>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="panchayatName"
+                                    name="panchayat"
+                                    readonly
+                                    required
+                                >
                             </div>
+                            
                         </div>
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -342,7 +359,14 @@
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Panchayat *</label>
-                                <input type="text" class="form-control" id="editPanchayat" name="panchayat" required>
+                                <input
+                                type="text"
+                                class="form-control"
+                                id="editPanchayat"
+                                name="panchayat"
+                                readonly
+                                required
+                                >
                             </div>
                         </div>
                         <div class="row">
@@ -402,7 +426,13 @@
   
               <div class="col-md-6 mb-3">
                 <label class="form-label">Panchayat (optional)</label>
-                <input type="text" class="form-control" name="panchayat">
+                <input
+                type="text"
+                class="form-control"
+                id="sensorPanchayat"
+                name="panchayat"
+                readonly
+                >
               </div>
             </div>
   
@@ -468,7 +498,12 @@
             <!-- Panchayat -->
             <div class="mb-3">
               <label class="form-label">Panchayat</label>
-              <input type="text" class="form-control" id="editPanchayat">
+              <input
+                type="text"
+                class="form-control"
+                id="editPanchayat"
+                readonly
+                >
             </div>
   
             <!-- Villager Phone -->

@@ -95,13 +95,32 @@ function openDashboard() {
   const panchayatSelect = document.getElementById('panchayatSelect');
   const panchayatId = panchayatSelect.value;
 
-  console.log('Selected panchayatId:', panchayatId);
-
   if (!panchayatId) {
     alert('Please select a panchayat');
     return;
   }
 
-  window.location.href = `index.html?panchayatId=${panchayatId}`;
+  // 🔹 READ SELECTED NAMES (UI CONTEXT)
+  const panchayatName =
+    panchayatSelect.options[panchayatSelect.selectedIndex].text;
+
+  const blockName =
+    blockSelect && blockSelect.selectedIndex > 0
+      ? blockSelect.options[blockSelect.selectedIndex].text
+      : null;
+
+  const districtName =
+    districtSelect && districtSelect.selectedIndex > 0
+      ? districtSelect.options[districtSelect.selectedIndex].text
+      : null;
+
+  // 🔹 PASS CONTEXT FOR DASHBOARD HEADER
+  window.location.href =
+    `index.html?panchayatId=${panchayatId}` +
+    `&districtName=${encodeURIComponent(districtName || '')}` +
+    `&blockName=${encodeURIComponent(blockName || '')}` +
+    `&panchayatName=${encodeURIComponent(panchayatName)}`;
 }
+
+
 

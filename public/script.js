@@ -52,11 +52,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     USER_CTX = await meRes.json();
     console.log('User context loaded:', USER_CTX);
+    updateSidebarUser(USER_CTX);
+    updateDashboardHeaderFromURL();
+
+
     
+
     // 🔒 STEP B — lock UI for non-panchayat admins
     if (USER_CTX.role !== 'panchayat_admin') {
       console.log('User is not panchayat admin, hiding edit buttons');
       hideAddEditDeleteButtons();
+      removeActionsHeaderIfReadOnly();
     } else {
       console.log('User is panchayat admin, showing all buttons');
     }
@@ -82,6 +88,14 @@ document.addEventListener('DOMContentLoaded', async function() {
     showToast('Failed to load user information', 'danger');
   }
 });
+
+// to see if current user panchayt admin or not
+function isPanchayatAdmin() {
+  return USER_CTX?.role === 'panchayat_admin';
+}
+
+
+
 
 
         // Section navigation
@@ -146,7 +160,61 @@ async function loadDashboard() {
 }
 
 
-        //hide add and delete
+//dashboard panchayath context
+
+  function updateDashboardHeaderFromURL() {
+    const params = new URLSearchParams(window.location.search);
+
+    const district = params.get('districtName');
+    const block = params.get('blockName');
+    const panchayat = params.get('panchayatName');
+
+    const el = document.getElementById('dashboardPanchayatName');
+    if (!el) return;
+
+    const parts = [];
+    if (district) parts.push(`District: ${district}`);
+    if (block) parts.push(`Block: ${block}`);
+    if (panchayat) parts.push(`Panchayat: ${panchayat}`);
+
+    if (!parts.length) return;
+
+    el.innerHTML = parts.join(' <span class="mx-1">→</span> ');
+    el.classList.remove('d-none');
+  }
+
+
+
+//sidebar user context
+function updateSidebarUser(ctx) {
+  const el = document.getElementById('sidebarUserInfo');
+  if (!el) return;
+
+  switch (ctx.role) {
+    case 'panchayat_admin':
+      el.textContent = `Panchayat Admin – ${ctx.panchayatName || 'Unknown Panchayat'}`;
+      break;
+
+    case 'block_admin':
+      el.textContent = `Block Admin – ${ctx.blockName || 'Unknown Block'}`;
+      break;
+
+    case 'district_admin':
+      el.textContent = `District Admin – ${ctx.districtName || 'Unknown District'}`;
+      break;
+
+    case 'state_admin':
+      el.textContent = 'State Admin';
+      break;
+
+    default:
+      el.textContent = 'Admin';
+  }
+}
+
+
+
+        //hide add function
         function hideAddEditDeleteButtons() {
 
           // Quick action buttons
@@ -162,6 +230,34 @@ async function loadDashboard() {
           document.querySelectorAll('#allSensorsTable button')
             .forEach(btn => btn.style.display = 'none');
         }
+
+        //to temove action header in higher level admin login
+        function removeActionsHeaderIfReadOnly() {
+          if (isPanchayatAdmin()) return;
+        
+          // Remove "Actions" header from Villagers table
+          const villagersTable = document.querySelector('#villagersSection table thead tr');
+          if (villagersTable) {
+            const ths = villagersTable.querySelectorAll('th');
+            ths.forEach(th => {
+              if (th.textContent.trim() === 'Actions') {
+                th.remove();
+              }
+            });
+          }
+        
+          // Remove "Actions" header from Sensors table
+          const sensorsTable = document.querySelector('#sensorsSection table thead tr');
+          if (sensorsTable) {
+            const ths = sensorsTable.querySelectorAll('th');
+            ths.forEach(th => {
+              if (th.textContent.trim() === 'Actions') {
+                th.remove();
+              }
+            });
+          }
+        }
+        
         
 
         // Load all villagers for management section
@@ -355,12 +451,16 @@ function updateVillagersTable(villagers) {
             <td>${villager.village || 'N/A'}</td>
             <td>${villager.panchayat || 'N/A'}</td>
             <td>
-                <button class="btn btn-sm btn-outline-primary me-2" onclick="editVillager('${villager.aadhaar_number}')">
-                    <i class="bi bi-pencil"></i> Edit
+              ${isPanchayatAdmin() ? `
+                <button class="btn btn-sm btn-outline-primary me-2"
+                  onclick="editVillager('${villager.aadhaar_number}')">
+                  <i class="bi bi-pencil"></i> Edit
                 </button>
-                <button class="btn btn-sm btn-outline-danger" onclick="deleteVillager('${villager.aadhaar_number}')">
-                    <i class="bi bi-trash"></i> Delete
+                <button class="btn btn-sm btn-outline-danger"
+                  onclick="deleteVillager('${villager.aadhaar_number}')">
+                  <i class="bi bi-trash"></i> Delete
                 </button>
+              ` : ''}
             </td>
         `;
         row.style.cursor = 'pointer';
@@ -460,9 +560,9 @@ async function updateSensor() {
   const payload = {
     deviceName: document.getElementById('editDeviceName').value,
     village: document.getElementById('editVillage').value,
-    panchayat: document.getElementById('editPanchayat').value,
     phone: document.getElementById('editSensorPhone').value || ''
   };
+  
   
   console.log('Updating sensor:', devEUI, payload);
 
@@ -550,10 +650,12 @@ function updateSensorsTable(sensors) {
         <small class="text-muted">${timeDisplay}</small>
       </td>
       <td>
-        <button class="btn btn-sm btn-outline-primary me-2"
-          onclick="editSensor('${sensor.devEUI}')">Edit</button>
-        <button class="btn btn-sm btn-outline-danger"
-          onclick="deleteSensor('${sensor.devEUI}')">Delete</button>
+        ${isPanchayatAdmin() ? `
+          <button class="btn btn-sm btn-outline-primary me-2"
+            onclick="editSensor('${sensor.devEUI}')">Edit</button>
+          <button class="btn btn-sm btn-outline-danger"
+            onclick="deleteSensor('${sensor.devEUI}')">Delete</button>
+        ` : ''}
       </td>
     `;
     
@@ -563,7 +665,7 @@ function updateSensorsTable(sensors) {
   console.log('Sensors table updated with', sensors.length, 'rows');
 }
 
-        async function deleteSensor(devEUI) {
+  async function deleteSensor(devEUI) {
   if (!confirm(`Are you sure you want to delete sensor ${devEUI}?`)) {
     return;
   }
@@ -606,10 +708,15 @@ function updateSensorsTable(sensors) {
 
         // Modal functions
         function showAddVillagerModal() {
-            const modal = new bootstrap.Modal(document.getElementById('addVillagerModal'));
-            modal.show();
+          document.getElementById('panchayatName').value =
+            USER_CTX.panchayatName;
+        
+          new bootstrap.Modal(
+            document.getElementById('addVillagerModal')
+          ).show();
         }
-
+        
+        
         function showAddSensorModal() {
           const form = document.getElementById('sensorForm');
           form.reset();
@@ -617,13 +724,20 @@ function updateSensorsTable(sensors) {
           // ensure devEUI is enabled
           form.querySelector('[name="devEUI"]').disabled = false;
         
+          // 🔒 Fix Panchayat from logged-in user
+          if (USER_CTX?.panchayatName) {
+            document.getElementById('sensorPanchayat').value =
+              USER_CTX.panchayatName;
+          }
+        
           const title = document.querySelector('#addSensorModal .modal-title');
           if (title) title.textContent = 'Add New Sensor';
         
           new bootstrap.Modal(
             document.getElementById('addSensorModal')
           ).show();
-        }        
+        }
+        
 
         //Edit Sensor
        
@@ -654,7 +768,7 @@ async function editSensor(devEUI) {
     document.getElementById('editDevEUI').value = s.devEUI || '';
     document.getElementById('editDeviceName').value = s.name || '';
     document.getElementById('editVillage').value = s.village || '';
-    document.getElementById('editPanchayat').value = s.panchayat || '';
+    document.getElementById('editPanchayat').value =USER_CTX.panchayatName;
     document.getElementById('editSensorPhone').value = s.phone || '';
 
     // Show the modal
@@ -671,47 +785,7 @@ async function editSensor(devEUI) {
         //Update Sensor
         // Update sensors management table - FIXED VERSION
         // Update sensors management table - FIXED VERSION
-function updateSensorsTable(sensors) {
-  const tbody = document.getElementById('allSensorsTable');
-  tbody.innerHTML = '';
 
-  if (sensors.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4">No sensors found</td></tr>';
-    return;
-  }
-
-  sensors.forEach(sensor => {
-    const row = document.createElement('tr');
-
-    // Format measurement display
-    let measurementDisplay = 'No data';
-    if (sensor.measurement && sensor.measurement !== 'No data') {
-      try {
-        const data = JSON.parse(sensor.measurement);
-        measurementDisplay = `${data._field || 'value'}: ${data._value}`;
-      } catch (e) {
-        measurementDisplay = sensor.measurement;
-      }
-    }
-
-    row.innerHTML = `
-      <td>${sensor.devEUI}</td>
-      <td>${sensor.name}</td>
-      <td>
-        <div>${measurementDisplay}</div>
-        <small class="text-muted">${sensor.time || ''}</small>
-      </td>
-      <td>
-        <button class="btn btn-sm btn-outline-primary"
-          onclick="editSensor('${sensor.devEUI}')">Edit</button>
-        <button class="btn btn-sm btn-outline-danger"
-          onclick="deleteSensor('${sensor.devEUI}')">Delete</button>
-      </td>
-    `;
-
-    tbody.appendChild(row);
-  });
-}
         // Save villager
         async function saveVillager() {
             const form = document.getElementById('villagerForm');
@@ -773,9 +847,14 @@ async function editVillager(aadhaarNumber) {
       document.getElementById('editName').value = villager.name || '';
       document.getElementById('editPhone').value = villager.phone || '';
       document.getElementById('editVillage').value = villager.village || '';
-      document.getElementById('editPanchayat').value = villager.panchayat || '';
+
+      // 🔒 FIXED PANCHAYAT
+      document.getElementById('editPanchayat').value =
+        USER_CTX.panchayatName;
+
       document.getElementById('editOccupation').value = villager.occupation || '';
       document.getElementById('editAddress').value = villager.address || '';
+
 
       // Show the modal
       const modal = new bootstrap.Modal(document.getElementById('editVillagerModal'));
@@ -799,10 +878,10 @@ async function updateVillager() {
       name: document.getElementById('editName').value || '',
       phone: document.getElementById('editPhone').value || '',
       village: document.getElementById('editVillage').value || '',
-      panchayat: document.getElementById('editPanchayat').value || '',
       address: document.getElementById('editAddress').value || '',
       occupation: document.getElementById('editOccupation').value || ''
     };
+    
 
     console.log('📤 Updating villager:', aadhaarNumber, updateData);
 
@@ -904,10 +983,6 @@ async function saveSensor() {
   }
 
   try {
-    // Add panchayat field if missing
-    if (!data.panchayat) {
-      data.panchayat = 'D1B1G1'; // Default or get from context
-    }
     
     const response = await authFetch(`/sensors`, {
       method: 'POST',
