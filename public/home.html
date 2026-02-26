@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Home | Smart Panchayat</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    .sidebar {
+        min-height: 100vh;
+        background: #198754;
+        color: white;
+    }
+    .sidebar .nav-link {
+        color: rgba(255,255,255,.8);
+        padding: 12px 20px;
+        margin: 5px 0;
+        cursor: pointer;
+    }
+    .sidebar .nav-link:hover {
+        background: rgba(255,255,255,.1);
+        color: white;
+    }
+    .sidebar .nav-link.active {
+        background: rgba(255,255,255,.2);
+        color: white;
+    }
+    .stat-card {
+        border-radius: 10px;
+        transition: transform 0.3s;
+        cursor: pointer;
+    }
+    .stat-card:hover {
+        transform: translateY(-5px);
+    }
+    .realtime-badge {
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.7; }
+        100% { opacity: 1; }
+    }
+  </style>
+</head>
+
+<body class="bg-light">
+
+<div class="container-fluid">
+  <div class="row">
+
+    <!-- Sidebar -->
+    <div class="col-md-2 sidebar p-3">
+      <h5 class="mb-4">Smart Panchayat</h5>
+
+      <div class="nav flex-column">
+        <div class="nav-link active">Home</div>
+
+        <div id="selectLocationNav" class="nav-link d-none" onclick="goToSelectLocation()">
+          Select Location
+        </div>
+
+        <div class="nav-link" onclick="viewOnMap()">
+          View on Map
+        </div>
+
+        <div class="nav-link" onclick="logout()">
+          Logout
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="col-md-10 p-4">
+
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <h4 id="welcomeText">Welcome</h4>
+        <span class="badge bg-success realtime-badge">LIVE</span>
+      </div>
+
+      <div class="mb-4 text-muted" id="contextInfo"></div>
+
+      <div class="row g-4">
+
+        <!-- Select Location -->
+        <div class="col-md-4 d-none" id="selectLocationCard">
+          <div class="card stat-card shadow-sm h-100" onclick="goToSelectLocation()">
+            <div class="card-body">
+              <h5 class="card-title">📍 Select Location</h5>
+              <p class="card-text">
+                Choose district, block or panchayat.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- View on Map -->
+        <div class="col-md-4">
+          <div class="card stat-card shadow-sm h-100" onclick="viewOnMap()">
+            <div class="card-body">
+              <h5 class="card-title">🗺️ View on Map</h5>
+              <p class="card-text">
+                View sensors and boundaries based on your access.
+              </p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  const API_BASE = 'http://localhost:8181/api';
+
+  async function loadHome() {
+    try {
+      const res = await fetch(`${API_BASE}/me`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+
+      if (!res.ok) throw new Error('Unauthorized');
+
+      const me = await res.json();
+
+      document.getElementById('welcomeText').textContent =
+        `Welcome, ${me.role.replace('_', ' ').toUpperCase()}`;
+
+      let context = [];
+      if (me.districtName) context.push(`District: ${me.districtName}`);
+      if (me.blockName) context.push(`Block: ${me.blockName}`);
+      if (me.panchayatName) context.push(`Panchayat: ${me.panchayatName}`);
+
+      document.getElementById('contextInfo').textContent =
+        context.length ? context.join(' | ') : 'State Level Access';
+
+      // Only State & District admins can select location
+      if (me.role === 'state_admin' || me.role === 'district_admin' || me.role === 'block_admin') {
+        document.getElementById('selectLocationNav').classList.remove('d-none');
+        document.getElementById('selectLocationCard').classList.remove('d-none');
+      }
+
+    } catch (err) {
+      console.error(err);
+      logout();
+    }
+  }
+
+  function viewOnMap() {
+    window.location.href = '/map/my_flask_app';
+  }
+
+  function goToSelectLocation() {
+    window.location.href = 'select-location.html';
+  }
+
+  function logout() {
+    localStorage.removeItem('token');
+    window.location.href = 'login.html';
+  }
+
+  loadHome();
+</script>
+
+</body>
+</html>

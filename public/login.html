@@ -78,12 +78,15 @@
         // ✅ Store JWT
         localStorage.setItem('token', data.token);
     
-        // ➡️ Redirect based on role
+
         if (data.role === 'panchayat_admin') {
-  window.location.href = `index.html?panchayatId=${data.panchayatId}`;
-} else {
-  window.location.href = 'select-location.html';
-}
+          // Panchayat admin goes straight to dashboard
+          window.location.href = `index.html?panchayatId=${data.panchayatId}`;
+        } else {
+          // State & District admins go to Home
+          window.location.href = 'home.html';
+        }
+
 
 
     

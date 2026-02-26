@@ -435,6 +435,31 @@
                 >
               </div>
             </div>
+
+            <!-- AUTO LOCATION -->
+            <div class="row">
+                <div class="col-md-12 mb-3">
+                <label class="form-label">Sensor Location</label>
+            
+                <div class="d-flex align-items-center gap-2">
+                    <button 
+                    type="button" 
+                    class="btn btn-outline-primary btn-sm"
+                    onclick="getCurrentLocation()">
+                    Get Current Location
+                    </button>
+            
+                    <span id="locationStatus" class="text-muted">
+                    Location not captured
+                    </span>
+                </div>
+            
+                <!-- Hidden fields to store coordinates -->
+                <input type="hidden" name="latitude" id="sensorLatitude">
+                <input type="hidden" name="longitude" id="sensorLongitude">
+                </div>
+            </div>
+  
   
             <!-- OPTIONAL MAPPING -->
             <div class="row">

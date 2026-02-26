@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live Sensor Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        #map { height: 100vh; width: 100%; }
+        .custom-pin { background: none; border: none; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+
+const AUTH_API = 'http://127.0.0.1:8181/api';
+
+async function getMe() {
+    const res = await fetch(`${AUTH_API}/me`, {
+        headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`
+        }
+    });
+
+    if (!res.ok) throw new Error('Auth failed');
+    return res.json();
+}
+
+// Initialize map
+const map = L.map('map').setView([10.8505, 76.2711], 7);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+}).addTo(map);
+
+let sensorLayer = null;
+let boundaryLayer = null;
+
+//HIGHLIGHT INTERIOR OF STATE/DISTRICT
+function dimOutside(feature) {
+    const coords = feature.geometry.coordinates[0]
+        .map(c => [c[1], c[0]]); // convert [lng, lat] → [lat, lng]
+
+    const world = [
+        [-90, -180],
+        [-90, 180],
+        [90, 180],
+        [90, -180]
+    ];
+
+    L.polygon([world, coords], {
+        fillColor: '#000',
+        fillOpacity: 0.45,
+        color: 'transparent',
+        interactive: false
+    }).addTo(map);
+}
+
+
+// -------------------------------
+// Load Kerala Boundary (State Admin)
+// -------------------------------
+async function loadStateBoundary() {
+    const response = await fetch('state.geojson');
+    const data = await response.json();
+
+    const feature = data.features[0];
+
+    // Add green border
+    boundaryLayer = L.geoJSON(feature, {
+        style: { color: '#2ecc71', weight: 3, fillOpacity: 0 }
+    }).addTo(map);
+
+    // Dim outside
+    dimOutside(feature);
+
+    map.fitBounds(boundaryLayer.getBounds());
+}
+
+
+// -------------------------------
+// Load District Boundary (District Admin)
+// -------------------------------
+async function loadDistrictBoundary(districtName) {
+    const res = await fetch('district.geojson');
+    const geojson = await res.json();
+
+    const feature = geojson.features.find(
+        f => f.properties.DISTRICT === districtName
+    );
+
+    if (!feature) return;
+
+    boundaryLayer = L.geoJSON(feature, {
+        style: { color: '#2ecc71', weight: 3, fillOpacity: 0 }
+    }).addTo(map);
+
+    dimOutside(feature);
+
+    map.fitBounds(boundaryLayer.getBounds());
+}
+
+
+// -------------------------------
+// Temperature Color Logic
+// -------------------------------
+function getTempColor(temp) {
+    if (temp === null || isNaN(temp)) return '#888888';
+
+    const minTemp = 0;
+    const maxTemp = 40;
+
+    // Clamp temperature
+    temp = Math.max(minTemp, Math.min(maxTemp, temp));
+
+    // Normalize (0 to 1)
+    const ratio = (temp - minTemp) / (maxTemp - minTemp);
+
+    // Hue from 240 (blue) to 0 (red)
+    const hue = 240 - (240 * ratio);
+
+    return `hsl(${hue}, 100%, 50%)`;
+}
+
+
+
+// -------------------------------
+// Create Custom SVG Pin
+// -------------------------------
+function createPinIcon(color) {
+    return L.divIcon({
+        className: 'custom-pin',
+        html: `
+        <svg width="30" height="42" viewBox="0 0 24 24">
+            <path d="M12 0C7.58 0 4 3.58 4 8c0 5.25 8 13 8 13s8-7.75 8-13c0-4.42-3.58-8-8-8z" 
+                fill="${color}" stroke="#fff" stroke-width="1"/>
+            <circle cx="12" cy="8" r="3" fill="white"/>
+        </svg>`,
+        iconSize: [30, 42],
+        iconAnchor: [15, 42],
+        popupAnchor: [0, -40]
+    });
+}
+
+// -------------------------------
+// Fetch Sensors from NEW API
+// -------------------------------
+async function refreshMap() {
+    try {
+        const response = await fetch(`${AUTH_API}/map/sensors`, {
+            headers: {
+                Authorization: `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+
+        const data = await response.json();
+
+        if (sensorLayer) {
+            map.removeLayer(sensorLayer);
+        }
+
+        sensorLayer = L.geoJSON(data, {
+            pointToLayer: (feature, latlng) => {
+                const temp = feature.properties.temp;
+                return L.marker(latlng, {
+                    icon: createPinIcon(getTempColor(temp))
+                });
+            },
+            onEachFeature: (feature, layer) => {
+                const { id, name, temp, lastUpdated } = feature.properties;
+
+                const reading = temp !== null ? `${temp} °C` : 'No Data';
+                const updated = lastUpdated
+                    ? new Date(lastUpdated).toLocaleString()
+                    : 'No recent update';
+
+                const popupContent = `
+                    <div style="font-family: Arial; min-width: 180px;">
+                        <h5>${name}</h5>
+                        <strong>ID:</strong> ${id}<br>
+                        <strong>Temperature:</strong> ${reading}<br>
+                        <strong>Last Updated:</strong><br>
+                        <small>${updated}</small>
+                    </div>
+                `;
+
+                layer.bindPopup(popupContent);
+            }
+        }).addTo(map);
+
+    } catch (err) {
+        console.error("Map refresh error:", err);
+    }
+}
+
+// -------------------------------
+// Initialize Map Based on Role
+// -------------------------------
+(async function initMap() {
+    try {
+        const me = await getMe();
+
+        console.log("Logged in as:", me.role);
+
+        if (me.role === 'district_admin') {
+            await loadDistrictBoundary(me.districtName);
+        } else {
+            await loadStateBoundary();
+        }
+
+        await refreshMap();           // Initial load
+        setInterval(refreshMap, 10000); // Auto-refresh every 10s
+
+    } catch (err) {
+        console.error("Initialization error:", err);
+    }
+})();
+
+</script>
+</body>
+</html>

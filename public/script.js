@@ -967,60 +967,113 @@ async function deleteVillager(aadhaarNumber) {
   }
 }
 
-        // Save sensor
-        // Save sensor - FIXED
-async function saveSensor() {
-  const form = document.getElementById('sensorForm');
-  const formData = new FormData(form);
-  const data = Object.fromEntries(formData);
-  
-  console.log('📤 Saving sensor data:', data);
-  console.log('Panchayat ID from URL:', PANCHAYAT_ID);
 
-  if (!data.devEUI || !data.deviceName) {
-    showToast('DevEUI and Device Name are required', 'danger');
+// get location when adding sensor
+function getCurrentLocation() {
+  const status = document.getElementById("locationStatus");
+
+  if (!navigator.geolocation) {
+    status.innerText = "Geolocation not supported";
     return;
   }
 
-  try {
-    
-    const response = await authFetch(`/sensors`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify(data)
-    });
+  status.innerText = "Fetching location...";
 
-    console.log('Sensor save response status:', response.status);
-    const result = await response.json();
-    console.log('✅ Sensor save response:', result);
+  navigator.geolocation.getCurrentPosition(
+    function (position) {
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
 
-    if (result.success) {
-      showToast('✅ Sensor added successfully!', 'success');
-      
-      // Hide modal
-      const modal = bootstrap.Modal.getInstance(document.getElementById('addSensorModal'));
-      modal.hide();
-      form.reset();
+      document.getElementById("sensorLatitude").value = lat;
+      document.getElementById("sensorLongitude").value = lon;
 
-      // Refresh data
-      setTimeout(() => {
-        loadAllSensors();
-        loadSensorsForStatus();
-        loadDashboard();
-      }, 1000);
-
-    } else {
-      showToast('❌ Error: ' + (result.error || 'Failed to add sensor'), 'danger');
+      status.innerText = `Captured (Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)})`;
+      status.classList.remove("text-muted");
+      status.classList.add("text-success");
+    },
+    function (error) {
+      status.innerText = "Unable to fetch location";
+      status.classList.add("text-danger");
+      console.error(error);
     }
-
-  } catch (error) {
-    console.error('❌ Save sensor error:', error);
-    showToast('⚠️ Failed to add sensor. Please try again.', 'warning');
-  }
+  );
 }
+
+        // Save sensor
+        // Save sensor - FIXED
+        async function saveSensor() {
+          const form = document.getElementById('sensorForm');
+          const formData = new FormData(form);
+          const data = Object.fromEntries(formData);
+        
+          // Get hidden GPS values
+          const latitude = document.getElementById("sensorLatitude").value;
+          const longitude = document.getElementById("sensorLongitude").value;
+        
+          console.log('📤 Raw form data:', data);
+          console.log('📍 Latitude:', latitude, 'Longitude:', longitude);
+        
+          if (!data.devEUI || !data.deviceName) {
+            showToast('DevEUI and Device Name are required', 'danger');
+            return;
+          }
+        
+          // 🚨 Location required
+          if (!latitude || !longitude) {
+            showToast('⚠️ Location not captured. Please allow GPS access.', 'warning');
+            return;
+          }
+        
+          // Convert to numbers
+          data.latitude = parseFloat(latitude);
+          data.longitude = parseFloat(longitude);
+        
+          try {
+        
+            const response = await authFetch(`/sensors`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+              },
+              body: JSON.stringify(data)
+            });
+        
+            console.log('Sensor save response status:', response.status);
+            const result = await response.json();
+            console.log('✅ Sensor save response:', result);
+        
+            if (result.success) {
+              showToast('✅ Sensor added successfully!', 'success');
+        
+              const modal = bootstrap.Modal.getInstance(
+                document.getElementById('addSensorModal')
+              );
+              modal.hide();
+        
+              form.reset();
+        
+              // Clear hidden location fields
+              document.getElementById("sensorLatitude").value = '';
+              document.getElementById("sensorLongitude").value = '';
+              document.getElementById("locationStatus").innerText = 'Location not captured';
+        
+              setTimeout(() => {
+                loadAllSensors();
+                loadSensorsForStatus();
+                loadDashboard();
+              }, 1000);
+        
+            } else {
+              showToast('❌ Error: ' + (result.error || 'Failed to add sensor'), 'danger');
+            }
+        
+          } catch (error) {
+            console.error('❌ Save sensor error:', error);
+            showToast('⚠️ Failed to add sensor. Please try again.', 'warning');
+          }
+        }
+        
         
         // Utility functions
         function refreshDashboard() {

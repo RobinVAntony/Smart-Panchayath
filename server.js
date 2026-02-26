@@ -27,12 +27,18 @@ const queryApi = influxDB.getQueryApi(INFLUX_CONFIG.org);
 const mysql = require('mysql2/promise');
 
 const db = mysql.createPool({
-  host: process.env.MYSQL_HOST,
-  user: process.env.MYSQL_USER,
-  password: process.env.MYSQL_PASSWORD,
-  database: process.env.MYSQL_DATABASE,
-  port: process.env.MYSQL_PORT,
+  host: 'localhost',        // or '127.0.0.1'
+  user: 'root',             // your local MySQL user
+  password: '@Robin03',
+  database: 'smart_panchayat',
+  port: 3306,               // default MySQL port
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
+
+
+
 
 // ==================== MIDDLEWARE ====================
 console.log('Influx env check:', {
@@ -650,16 +656,19 @@ app.get('/api/sensors/:devEUI', authMiddleware, async (req, res) => {
   }
 });
 
+
 // Add sensor - CORRECTED VERSION
 app.post(
   '/api/sensors',
   authMiddleware,
   requirePanchayatAdmin,
   async (req, res) => {
-    const { devEUI, deviceName, village, phone } = req.body;
+    const { devEUI, deviceName, village, phone, latitude, longitude } = req.body;
 
     console.log('Adding sensor:', req.body);
+    console.log('USER CONTEXT:', req.user);
 
+    // ✅ Required fields
     if (!devEUI || !deviceName) {
       return res.status(400).json({
         success: false,
@@ -667,33 +676,82 @@ app.post(
       });
     }
 
-    const panchayatId = req.user.panchayatId;
+    // ✅ Location validation (REQUIRED)
+    if (
+      latitude === undefined ||
+      longitude === undefined ||
+      latitude === null ||
+      longitude === null
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'Location is required'
+      });
+    }
+
+    const lat = parseFloat(latitude);
+    const lon = parseFloat(longitude);
+
+    if (
+      isNaN(lat) || isNaN(lon) ||
+      lat < -90 || lat > 90 ||
+      lon < -180 || lon > 180
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid latitude or longitude'
+      });
+    }
+
+    const {
+      panchayatId,
+      blockId,
+      districtId
+    } = req.user;
+
     const conn = await db.getConnection();
 
     try {
       await conn.beginTransaction();
 
-      // 🔒 Resolve panchayat name from locations (server-side)
+      // 🔒 Get Panchayat name (since you keep the name column)
       const [[p]] = await conn.query(
         `SELECT name FROM locations 
          WHERE id = ? AND type = 'PANCHAYAT'`,
         [panchayatId]
       );
 
-      const panchayatName = p ? p.name : null;
+      if (!p) {
+        throw new Error('Invalid Panchayat');
+      }
 
-      // Insert sensor
+      const panchayatName = p.name;
+
+      // ✅ Insert sensor with full hierarchy + location
       const [sensorResult] = await conn.query(
         `INSERT INTO sensors 
-         (devEUI, name, village, panchayat, panchayat_id, installed_at)
-         VALUES (?, ?, ?, ?, ?, NOW())`,
-        [devEUI, deviceName, village || null, panchayatName, panchayatId]
+         (devEUI, name, village, panchayat, 
+          panchayat_id, block_id, district_id,
+          location, installed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 
+          POINT(?, ?), NOW())`,
+        [
+          devEUI,
+          deviceName,
+          village || null,
+          panchayatName,
+          panchayatId,
+          blockId,
+          districtId,
+          lon,   // ⚠️ longitude FIRST
+          lat    // latitude SECOND
+        ]
       );
 
       const sensorId = sensorResult.insertId;
       console.log('Sensor inserted with ID:', sensorId);
 
-      // Optional: map sensor → villager
+      // ✅ Optional: Map sensor → villager (UNCHANGED)
       if (phone) {
         const [[villager]] = await conn.query(
           `SELECT id FROM villagers
@@ -967,6 +1025,87 @@ app.post('/api/login', async (req, res) => {
     });
   }
 });
+
+
+//MAP FETCH POINTS
+app.get('/api/map/sensors', authMiddleware, async (req, res) => {
+  try {
+    let whereClause = '';
+    let params = [];
+
+    // 🔒 Role based filtering
+    if (req.user.role === 'district_admin') {
+      whereClause = 'WHERE district_id = ?';
+      params.push(req.user.districtId);
+    }
+
+    if (req.user.role === 'block_admin') {
+      whereClause = 'WHERE block_id = ?';
+      params.push(req.user.blockId);
+    }
+
+    if (req.user.role === 'panchayat_admin') {
+      whereClause = 'WHERE panchayat_id = ?';
+      params.push(req.user.panchayatId);
+    }
+
+    // State admin → no filter (all sensors)
+
+    const [sensorRows] = await db.query(
+      `
+      SELECT id, devEUI, name,
+             ST_X(location) AS lon,
+             ST_Y(location) AS lat
+      FROM sensors
+      ${whereClause}
+      `,
+      params
+    );
+
+    const features = [];
+
+    for (const sensor of sensorRows) {
+
+      // 🔥 Fetch latest reading from Influx
+      const flux = `
+        from(bucket: "${INFLUX_CONFIG.bucket}")
+          |> range(start: -1h)
+          |> filter(fn: (r) => r._measurement == "sensor_data")
+          |> filter(fn: (r) => r.devEUI == "${sensor.devEUI}")
+          |> sort(columns: ["_time"], desc: true)
+          |> limit(n: 1)
+      `;
+
+      const data = await queryInfluxDB(flux);
+
+      const latest = data.length ? data[0] : null;
+
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [sensor.lon, sensor.lat]
+        },
+        properties: {
+          id: sensor.id,
+          name: sensor.name,
+          temp: latest ? latest._value : null,
+          lastUpdated: latest ? latest._time : null
+        }
+      });
+    }
+
+    res.json({
+      type: "FeatureCollection",
+      features
+    });
+
+  } catch (err) {
+    console.error('Map sensor error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // User info endpoint - VERIFY THIS EXISTS
 app.get('/api/me', authMiddleware, async (req, res) => {
